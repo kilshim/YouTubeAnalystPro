@@ -2,6 +2,7 @@
 export interface VideoResult {
   id: string;
   title: string;
+  originalTitle?: string; // 번역 전 원본 제목 저장용
   description: string;
   tags: string[];
   viewCount: number;
@@ -31,4 +32,4 @@ export interface ChannelInfo {
 }
 
 export type SortOption = 'views' | 'likes' | 'date' | 'score';
-export type RegionOption = 'ALL' | 'KR' | 'Global';
+export type RegionOption = string;

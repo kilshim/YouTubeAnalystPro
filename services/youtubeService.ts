@@ -3,6 +3,25 @@ import { VideoResult, ChannelInfo } from '../types';
 
 const BASE_URL = 'https://www.googleapis.com/youtube/v3';
 
+// 국가별 주요 언어 매핑 (검색 정확도 향상용)
+const LANG_MAP: Record<string, string> = {
+  'KR': 'ko',
+  'US': 'en',
+  'GB': 'en',
+  'CA': 'en',
+  'JP': 'ja',
+  'IN': 'en', // 인도는 영어가 API 검색에 유리
+  'TW': 'zh-Hant',
+  'VN': 'vi',
+  'BR': 'pt',
+  'FR': 'fr',
+  'DE': 'de',
+  'ES': 'es',
+  'ID': 'id',
+  'RU': 'ru',
+  'TH': 'th',
+};
+
 export const fetchYouTubeData = async (
   query: string, 
   apiKey: string, 
@@ -26,15 +45,14 @@ export const fetchYouTubeData = async (
     let relevanceLang = '';
 
     // 시장 구분에 따른 검색 필터 강화
-    if (region === 'KR') {
-      regionParam = '&regionCode=KR';
-      relevanceLang = '&relevanceLanguage=ko';
-    } else if (region === 'Global') {
-      // 해외(US 기준) 및 영어권 영상 우선 검색으로 한국 영상 노출 최소화
-      regionParam = '&regionCode=US';
-      relevanceLang = '&relevanceLanguage=en';
+    if (region && region !== 'ALL') {
+      regionParam = `&regionCode=${region}`;
+      // 해당 국가의 언어 코드가 있으면 설정
+      if (LANG_MAP[region]) {
+        relevanceLang = `&relevanceLanguage=${LANG_MAP[region]}`;
+      }
     } else {
-      // ALL: 제한 없음
+      // ALL(전체)인 경우: 특정 지역 제한 없음
       regionParam = '';
       relevanceLang = '';
     }
@@ -72,10 +90,12 @@ const fetchTrendingVideos = async (
   categoryId: string
 ): Promise<VideoResult[]> => {
   let regionParam = '';
-  if (region === 'KR') regionParam = '&regionCode=KR';
-  else if (region === 'Global') regionParam = '&regionCode=US';
-  // ALL일 경우 regionCode를 생략하면 IP 기준(현재 접속 위치) 인기 급상승이 뜰 수 있으므로, 
-  // 명시적으로 US를 주거나 생략할 수 있음. 여기서는 사용자 의도에 따라 Global -> US, KR -> KR, ALL -> 생략(기본)
+  
+  // ALL일 경우 regionCode를 생략하면 IP 기준(현재 접속 위치)이 되거나 US가 기본이 됨.
+  // 사용자가 명시적으로 'ALL'을 선택했다면 보통 전세계를 의미하지만 YouTube API 트렌드는 regionCode 필수 아님.
+  if (region && region !== 'ALL') {
+    regionParam = `&regionCode=${region}`;
+  }
 
   const categoryParam = categoryId ? `&videoCategoryId=${categoryId}` : '';
   
@@ -103,10 +123,6 @@ const mapVideosWithChannelInfo = async (videoItems: any[], apiKey: string): Prom
   // 채널 ID 수집
   const channelIds = Array.from(new Set(videoItems.map((v: any) => v.snippet.channelId))).join(',');
   
-  // 채널 정보 조회 (구독자 수)
-  // 채널 ID가 너무 많으면(50개 초과) 나눠서 호출해야 할 수도 있으나, maxResults가 보통 50 이하이므로 한 번에 호출 시도
-  // 만약 maxResults가 100이면 나눠야 함. 안전하게 50개씩 나눔.
-  
   const channelIdList = Array.from(new Set(videoItems.map((v: any) => v.snippet.channelId)));
   const channelMap = new Map<string, string>();
 
@@ -123,7 +139,7 @@ const mapVideosWithChannelInfo = async (videoItems: any[], apiKey: string): Prom
 
   videoItems.forEach((video: any) => {
     results.push({
-      id: video.id, // videos 엔드포인트는 id가 string, search는 id.videoId 객체임에 주의 (여기선 video object 자체를 넘김)
+      id: video.id, // videos 엔드포인트는 id가 string
       title: video.snippet.title,
       description: video.snippet.description,
       tags: video.snippet.tags || [],
