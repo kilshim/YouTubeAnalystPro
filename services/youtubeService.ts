@@ -12,6 +12,12 @@ export const fetchYouTubeData = async (
 ): Promise<VideoResult[]> => {
   if (!apiKey) throw new Error('YouTube API 키가 필요합니다.');
 
+  // 검색어가 없는 경우: 실시간 인기 급상승(Trend) 데이터 조회
+  if (!query.trim()) {
+    return fetchTrendingVideos(apiKey, region, maxResults, categoryId);
+  }
+
+  // 검색어가 있는 경우: 기존 Search 로직 수행
   let allVideoIds: string[] = [];
   let nextPageToken = '';
   
@@ -58,6 +64,85 @@ export const fetchYouTubeData = async (
   return fetchVideoDetails(allVideoIds, apiKey);
 };
 
+// 인기 급상승 동영상 가져오기 (검색어 없을 때)
+const fetchTrendingVideos = async (
+  apiKey: string, 
+  region: string, 
+  maxResults: number, 
+  categoryId: string
+): Promise<VideoResult[]> => {
+  let regionParam = '';
+  if (region === 'KR') regionParam = '&regionCode=KR';
+  else if (region === 'Global') regionParam = '&regionCode=US';
+  // ALL일 경우 regionCode를 생략하면 IP 기준(현재 접속 위치) 인기 급상승이 뜰 수 있으므로, 
+  // 명시적으로 US를 주거나 생략할 수 있음. 여기서는 사용자 의도에 따라 Global -> US, KR -> KR, ALL -> 생략(기본)
+
+  const categoryParam = categoryId ? `&videoCategoryId=${categoryId}` : '';
+  
+  // chart=mostPopular 사용
+  const url = `${BASE_URL}/videos?part=snippet,statistics,contentDetails&chart=mostPopular&maxResults=${maxResults}${regionParam}${categoryParam}&key=${apiKey}`;
+
+  const res = await fetch(url);
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.error?.message || '트렌드 데이터를 가져오는 중 오류가 발생했습니다.');
+  }
+  const data = await res.json();
+
+  if (!data.items || data.items.length === 0) return [];
+
+  // videos 엔드포인트는 이미 상세 정보를 포함하므로 바로 매핑 가능하지만, 
+  // 구독자 수를 가져오기 위해 채널 정보가 추가로 필요함.
+  return mapVideosWithChannelInfo(data.items, apiKey);
+};
+
+// 기존 fetchVideoDetails 로직을 재사용 가능한 형태로 분리 및 통합
+const mapVideosWithChannelInfo = async (videoItems: any[], apiKey: string): Promise<VideoResult[]> => {
+  const results: VideoResult[] = [];
+  
+  // 채널 ID 수집
+  const channelIds = Array.from(new Set(videoItems.map((v: any) => v.snippet.channelId))).join(',');
+  
+  // 채널 정보 조회 (구독자 수)
+  // 채널 ID가 너무 많으면(50개 초과) 나눠서 호출해야 할 수도 있으나, maxResults가 보통 50 이하이므로 한 번에 호출 시도
+  // 만약 maxResults가 100이면 나눠야 함. 안전하게 50개씩 나눔.
+  
+  const channelIdList = Array.from(new Set(videoItems.map((v: any) => v.snippet.channelId)));
+  const channelMap = new Map<string, string>();
+
+  for (let i = 0; i < channelIdList.length; i += 50) {
+    const chunk = channelIdList.slice(i, i + 50).join(',');
+    if (!chunk) continue;
+    
+    const channelRes = await fetch(`${BASE_URL}/channels?part=statistics&id=${chunk}&key=${apiKey}`);
+    const channelData = await channelRes.json();
+    channelData.items?.forEach((c: any) => {
+      channelMap.set(c.id, c.statistics.subscriberCount);
+    });
+  }
+
+  videoItems.forEach((video: any) => {
+    results.push({
+      id: video.id, // videos 엔드포인트는 id가 string, search는 id.videoId 객체임에 주의 (여기선 video object 자체를 넘김)
+      title: video.snippet.title,
+      description: video.snippet.description,
+      tags: video.snippet.tags || [],
+      viewCount: parseInt(video.statistics.viewCount || '0'),
+      likeCount: parseInt(video.statistics.likeCount || '0'),
+      commentCount: parseInt(video.statistics.commentCount || '0'),
+      subscriberCount: parseInt(channelMap.get(video.snippet.channelId) || '0'),
+      channelTitle: video.snippet.channelTitle,
+      channelId: video.snippet.channelId,
+      publishedAt: video.snippet.publishedAt,
+      thumbnailUrl: video.snippet.thumbnails.medium.url,
+      duration: video.contentDetails.duration,
+    });
+  });
+
+  return results;
+}
+
+
 export const searchChannels = async (query: string, apiKey: string, maxResults: number = 10): Promise<ChannelInfo[]> => {
   const url = `${BASE_URL}/search?part=snippet&q=${encodeURIComponent(query)}&type=channel&maxResults=${maxResults}&key=${apiKey}`;
   const res = await fetch(url);
@@ -96,29 +181,10 @@ export const fetchVideoDetails = async (videoIds: string[], apiKey: string): Pro
     const data = await res.json();
     
     if (!data.items) continue;
-
-    const channelIds = Array.from(new Set(data.items.map((v: any) => v.snippet.channelId))).join(',');
-    const channelRes = await fetch(`${BASE_URL}/channels?part=statistics&id=${channelIds}&key=${apiKey}`);
-    const channelData = await channelRes.json();
-    const channelMap = new Map(channelData.items?.map((c: any) => [c.id, c.statistics.subscriberCount]) || []);
-
-    data.items.forEach((video: any) => {
-      results.push({
-        id: video.id,
-        title: video.snippet.title,
-        description: video.snippet.description,
-        tags: video.snippet.tags || [],
-        viewCount: parseInt(video.statistics.viewCount || '0'),
-        likeCount: parseInt(video.statistics.likeCount || '0'),
-        commentCount: parseInt(video.statistics.commentCount || '0'),
-        subscriberCount: parseInt(channelMap.get(video.snippet.channelId) as string || '0'),
-        channelTitle: video.snippet.channelTitle,
-        channelId: video.snippet.channelId,
-        publishedAt: video.snippet.publishedAt,
-        thumbnailUrl: video.snippet.thumbnails.medium.url,
-        duration: video.contentDetails.duration,
-      });
-    });
+    
+    // 재사용을 위해 위에서 만든 함수 호출
+    const batchResults = await mapVideosWithChannelInfo(data.items, apiKey);
+    results.push(...batchResults);
   }
   return results;
 };

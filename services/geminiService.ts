@@ -2,7 +2,7 @@
 import { GoogleGenAI } from "@google/genai";
 import { VideoResult } from "../types";
 
-export const analyzeWithGemini = async (query: string, data: VideoResult[], userApiKey?: string): Promise<string> => {
+export const analyzeWithGemini = async (query: string, data: VideoResult[], userApiKey?: string, categoryName?: string): Promise<string> => {
   // Use user-provided key or fall back to environment key
   const apiKey = userApiKey || process.env.API_KEY || "";
   if (!apiKey) throw new Error("Gemini API 키가 설정되지 않았습니다.");
@@ -14,8 +14,13 @@ export const analyzeWithGemini = async (query: string, data: VideoResult[], user
   const topTags = Array.from(new Set(data.flatMap(v => v.tags))).slice(0, 15).join(", ");
   const maxViews = Math.max(...data.map(v => v.viewCount));
 
+  // 쿼리가 있으면 키워드 분석, 없으면 카테고리 트렌드 분석
+  const analysisTarget = query 
+    ? `유튜브 키워드 '${query}' 심층 시장 분석` 
+    : `'${categoryName || '전체'}' 카테고리 실시간 인기 트렌드 분석`;
+
   const prompt = `
-    유튜브 키워드 '${query}' 심층 시장 분석 보고서:
+    ${analysisTarget} 보고서:
     
     1. 데이터 지표:
     - 분석 영상 수: ${data.length}개
@@ -25,9 +30,9 @@ export const analyzeWithGemini = async (query: string, data: VideoResult[], user
     - 핵심 태그: ${topTags}
 
     2. 요청 사항 (마크다운 형식으로 작성):
-    - 이 키워드의 현재 '시장 규모'와 '검색 트렌드'를 평가해줘.
+    - ${query ? `이 키워드의 현재 '시장 규모'와 '검색 트렌드'를 평가해줘.` : `이 카테고리에서 현재 가장 인기 있는 '콘텐츠 유형'과 '트렌드'를 분석해줘.`}
     - 평균 조회수와 경쟁 영상들의 품질을 바탕으로 '경쟁 강도(상/중/하)'를 분석해줘.
-    - 신규 유튜버가 이 키워드로 진입할 때 필요한 '차별화 전략' 3가지를 제시해줘.
+    - ${query ? `신규 유튜버가 이 키워드로 진입할 때` : `신규 유튜버가 이 카테고리의 현재 트렌드에 편승하기 위해`} 필요한 '차별화 전략' 3가지를 제시해줘.
     - 추천하는 영상 제목 스타일과 썸네일 컨셉을 제안해줘.
     
     답변은 전문적이고 분석적인 톤으로, 한국어로 작성해줘.

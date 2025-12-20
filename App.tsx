@@ -1,5 +1,5 @@
 
-import { ArrowLeft, BarChart3, ChevronDown, Hash as HashIcon, Loader2, Search, TrendingUp, Video, Activity, Eye, ThumbsUp, MessageSquare, Clock, LayoutGrid, List, Download, Tag, Globe, Users, Sparkles } from 'lucide-react';
+import { ArrowLeft, BarChart3, ChevronDown, Hash as HashIcon, Loader2, Search, TrendingUp, Video, Activity, Eye, ThumbsUp, MessageSquare, Clock, LayoutGrid, List, Download, Tag, Globe, Users, Sparkles, Flame, RefreshCcw } from 'lucide-react';
 import React, { useEffect, useMemo, useState } from 'react';
 import AiAnalysis from './components/AiAnalysis';
 import ChannelHeader from './components/ChannelHeader';
@@ -54,6 +54,8 @@ const App: React.FC = () => {
   const [category, setCategory] = useState<string>('');
   const [maxResults, setMaxResults] = useState<number>(20);
   const [results, setResults] = useState<VideoResult[]>([]);
+  const [trendingTags, setTrendingTags] = useState<string[]>([]); // 트렌드 키워드 상태
+  
   const [aiAnalysis, setAiAnalysis] = useState('');
   const [loading, setLoading] = useState(false);
   const [aiLoading, setAiLoading] = useState(false);
@@ -63,10 +65,18 @@ const App: React.FC = () => {
   const [modalOpen, setModalOpen] = useState(false);
   const [modalContent, setModalContent] = useState({ title: '', description: '', isAi: false });
 
+  // 테마 초기화
   useEffect(() => {
     if (isDark) document.documentElement.classList.add('dark');
     else document.documentElement.classList.remove('dark');
   }, [isDark]);
+
+  // 초기 로딩 시 인기 급상승 동영상 자동 로드
+  useEffect(() => {
+    if (youtubeKey && results.length === 0 && viewState === 'search' && !loading) {
+      triggerSearch('', maxResults);
+    }
+  }, [youtubeKey]);
 
   const triggerSearch = async (searchQuery: string, limit: number) => {
     if (!youtubeKey) return alert('YouTube API 키를 사이드바에서 입력 후 저장해주세요.');
@@ -79,20 +89,48 @@ const App: React.FC = () => {
         const data = await fetchYouTubeData(searchQuery, youtubeKey, region, limit, category);
         setResults(data);
         setChannelSearchResults([]);
+
+        // 검색어가 없을 때(=인기 급상승 모드)는 결과에서 태그를 추출하여 트렌드 키워드로 설정
+        if (!searchQuery.trim()) {
+           const allTags = data.flatMap(v => v.tags || []);
+           const tagCounts = allTags.reduce((acc, tag) => {
+             acc[tag] = (acc[tag] || 0) + 1;
+             return acc;
+           }, {} as Record<string, number>);
+           
+           // 빈도수 높은 순, 2글자 이상인 태그만 상위 10개 추출
+           const topTags = Object.entries(tagCounts)
+             .filter(([tag]) => tag.length >= 2)
+             .sort((a, b) => b[1] - a[1])
+             .slice(0, 12)
+             .map(([tag]) => tag);
+             
+           setTrendingTags(topTags);
+        } else {
+           // 검색어가 있으면 트렌드 태그 초기화 (혹은 유지하고 싶으면 이 줄 삭제)
+           setTrendingTags([]); 
+        }
         
         if (data.length > 0 && geminiKey) {
           setAiLoading(true);
-          const analysis = await analyzeWithGemini(searchQuery, data, geminiKey);
+          const categoryName = CATEGORIES.find(c => c.id === category)?.name;
+          const analysis = await analyzeWithGemini(searchQuery, data, geminiKey, categoryName);
           setAiAnalysis(analysis);
         }
       } else {
+        if (!searchQuery.trim()) {
+           alert("채널 검색 시에는 검색어를 반드시 입력해야 합니다.");
+           setLoading(false);
+           return;
+        }
         const channels = await searchChannels(searchQuery, youtubeKey, 12);
         setChannelSearchResults(channels);
         setResults([]);
         setAiAnalysis('');
       }
     } catch (err: any) { 
-      alert(err.message); 
+      // alert(err.message); // 초기 로딩 에러는 조용히 처리하거나 로그만
+      console.error(err);
     } finally { 
       setLoading(false); 
       setAiLoading(false); 
@@ -101,8 +139,20 @@ const App: React.FC = () => {
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!query.trim()) return;
+    if (searchType === 'channel' && !query.trim()) return;
     triggerSearch(query, maxResults);
+  };
+
+  const handleKeywordClick = (tag: string) => {
+    setQuery(tag);
+    setSearchType('video');
+    triggerSearch(tag, maxResults);
+  };
+
+  const handleReset = () => {
+    setQuery('');
+    setCategory('');
+    triggerSearch('', maxResults); // 트렌드 다시 로드
   };
 
   const handleChannelAnalysis = async (channelId: string) => {
@@ -142,6 +192,8 @@ const App: React.FC = () => {
     if (type === 'yt') {
       localStorage.setItem(YT_KEY_STORAGE, youtubeKey);
       alert('YouTube API 키가 저장되었습니다.');
+      // 키 저장 시 즉시 트렌드 로드 시도
+      if (results.length === 0) triggerSearch('', maxResults);
     } else {
       localStorage.setItem(AI_KEY_STORAGE, geminiKey);
       alert('Gemini API 키가 저장되었습니다. 이제 AI 분석 기능을 사용할 수 있습니다.');
@@ -268,6 +320,12 @@ const App: React.FC = () => {
     document.body.removeChild(link);
   };
 
+  const getPlaceholder = () => {
+    if (searchType === 'channel') return "검색할 채널명을 입력하세요...";
+    if (category && !query) return `비워두면 '${CATEGORIES.find(c => c.id === category)?.name}' 트렌드를 분석합니다`;
+    return "분석할 키워드를 입력하세요 (비워두면 실시간 트렌드)";
+  };
+
   return (
     <div className="flex flex-col md:flex-row min-h-screen bg-white dark:bg-[#0f172a] transition-colors">
       <Sidebar 
@@ -287,82 +345,116 @@ const App: React.FC = () => {
           )}
 
           {viewState === 'search' && (
-            <div className="bg-white dark:bg-[#1e293b] p-6 rounded-2xl border border-gray-200 dark:border-slate-800 shadow-sm dark:shadow-xl transition-colors">
-              <form onSubmit={handleSearch} className="flex flex-col space-y-4">
-                <div className="flex flex-col lg:flex-row gap-4">
-                  <div className="flex bg-gray-100 dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 p-1">
-                    <button 
-                      type="button" onClick={() => setSearchType('video')}
-                      className={`px-4 py-2 text-xs font-black rounded-lg transition-all ${searchType === 'video' ? 'bg-red-600 text-white shadow-md' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}
-                    >
-                      영상 검색
-                    </button>
-                    <button 
-                      type="button" onClick={() => setSearchType('channel')}
-                      className={`px-4 py-2 text-xs font-black rounded-lg transition-all ${searchType === 'channel' ? 'bg-red-600 text-white shadow-md' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}
-                    >
-                      채널 검색
-                    </button>
-                  </div>
-                  <input
-                    type="text" value={query} onChange={(e) => setQuery(e.target.value)}
-                    placeholder={searchType === 'video' ? "분석할 키워드를 입력하세요..." : "검색할 채널명을 입력하세요..."}
-                    className="flex-1 px-4 py-3 bg-gray-50 dark:bg-slate-950 border border-gray-200 dark:border-slate-800 rounded-xl text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-red-500 transition-colors font-medium"
-                  />
-                  <button type="submit" disabled={loading} className="px-8 py-3 bg-red-600 hover:bg-red-700 text-white font-black rounded-xl transition-all flex items-center justify-center disabled:opacity-50 shadow-lg shadow-red-500/20">
-                    {loading ? <Loader2 className="w-5 h-5 animate-spin mr-2" /> : <Search className="w-5 h-5 mr-2" />} {searchType === 'video' ? '데이터 분석' : '채널 검색'}
-                  </button>
-                </div>
-                
-                <div className="flex flex-wrap gap-4">
-                  <div className="flex items-center bg-gray-50 dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-xl px-3 group focus-within:ring-2 focus-within:ring-red-500 transition-all">
-                    <Globe className="w-4 h-4 text-slate-400 mr-2" />
-                    <select value={region} onChange={(e) => setRegion(e.target.value as any)} className="bg-transparent py-2.5 text-gray-900 dark:text-white text-sm font-bold outline-none cursor-pointer">
-                      <option value="ALL" className="bg-white dark:bg-slate-900">전체 시장 (Worldwide)</option>
-                      <option value="KR" className="bg-white dark:bg-slate-900">한국 시장 (Korea)</option>
-                      <option value="Global" className="bg-white dark:bg-slate-900">해외 시장 (Overseas)</option>
-                    </select>
-                  </div>
-
-                  {searchType === 'video' && (
-                    <div className="flex items-center bg-gray-50 dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-xl px-3 group focus-within:ring-2 focus-within:ring-red-500 transition-all">
-                      <Tag className="w-4 h-4 text-slate-400 mr-2" />
-                      <select 
-                        value={category} 
-                        onChange={(e) => setCategory(e.target.value)} 
-                        className="bg-transparent py-2.5 text-gray-900 dark:text-white text-sm font-bold outline-none cursor-pointer"
-                        style={{ colorScheme: isDark ? 'dark' : 'light' }}
+            <div className="space-y-6">
+              <div className="bg-white dark:bg-[#1e293b] p-6 rounded-2xl border border-gray-200 dark:border-slate-800 shadow-sm dark:shadow-xl transition-colors">
+                <form onSubmit={handleSearch} className="flex flex-col space-y-4">
+                  <div className="flex flex-col lg:flex-row gap-4">
+                    <div className="flex bg-gray-100 dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 p-1">
+                      <button 
+                        type="button" onClick={() => setSearchType('video')}
+                        className={`px-4 py-2 text-xs font-black rounded-lg transition-all ${searchType === 'video' ? 'bg-red-600 text-white shadow-md' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}
                       >
-                        {CATEGORIES.map(cat => (
-                          <option key={cat.id} value={cat.id} className="bg-white dark:bg-slate-900 text-gray-900 dark:text-white">
-                            {cat.name}
-                          </option>
-                        ))}
+                        영상 검색
+                      </button>
+                      <button 
+                        type="button" onClick={() => setSearchType('channel')}
+                        className={`px-4 py-2 text-xs font-black rounded-lg transition-all ${searchType === 'channel' ? 'bg-red-600 text-white shadow-md' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}
+                      >
+                        채널 검색
+                      </button>
+                    </div>
+                    <input
+                      type="text" value={query} onChange={(e) => setQuery(e.target.value)}
+                      placeholder={getPlaceholder()}
+                      className="flex-1 px-4 py-3 bg-gray-50 dark:bg-slate-950 border border-gray-200 dark:border-slate-800 rounded-xl text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-red-500 transition-colors font-medium placeholder:text-gray-400 dark:placeholder:text-gray-600"
+                    />
+                    <button type="submit" disabled={loading} className="px-8 py-3 bg-red-600 hover:bg-red-700 text-white font-black rounded-xl transition-all flex items-center justify-center disabled:opacity-50 shadow-lg shadow-red-500/20">
+                      {loading ? <Loader2 className="w-5 h-5 animate-spin mr-2" /> : <Search className="w-5 h-5 mr-2" />} 
+                      {searchType === 'video' ? (query ? '키워드 분석' : '트렌드 분석') : '채널 검색'}
+                    </button>
+                    {(query || category) && (
+                      <button 
+                        type="button" 
+                        onClick={handleReset}
+                        className="px-4 py-3 bg-gray-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 font-bold rounded-xl hover:bg-gray-200 dark:hover:bg-slate-700 transition-all flex items-center justify-center"
+                        title="검색 초기화 및 트렌드 보기"
+                      >
+                        <RefreshCcw className="w-5 h-5" />
+                      </button>
+                    )}
+                  </div>
+                  
+                  <div className="flex flex-wrap gap-4">
+                    <div className="flex items-center bg-gray-50 dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-xl px-3 group focus-within:ring-2 focus-within:ring-red-500 transition-all">
+                      <Globe className="w-4 h-4 text-slate-400 mr-2" />
+                      <select value={region} onChange={(e) => setRegion(e.target.value as any)} className="bg-transparent py-2.5 text-gray-900 dark:text-white text-sm font-bold outline-none cursor-pointer">
+                        <option value="ALL" className="bg-white dark:bg-slate-900">전체 시장 (Worldwide)</option>
+                        <option value="KR" className="bg-white dark:bg-slate-900">한국 시장 (Korea)</option>
+                        <option value="Global" className="bg-white dark:bg-slate-900">해외 시장 (Overseas)</option>
                       </select>
                     </div>
-                  )}
 
-                  <div className="flex items-center bg-gray-50 dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-xl px-3 group focus-within:ring-2 focus-within:ring-red-500 transition-all">
-                    <List className="w-4 h-4 text-slate-400 mr-2" />
-                    <select 
-                      value={maxResults} 
-                      onChange={(e) => setMaxResults(Number(e.target.value))} 
-                      className="bg-transparent py-2.5 text-gray-900 dark:text-white text-sm font-bold outline-none cursor-pointer"
-                    >
-                      <option value={10} className="bg-white dark:bg-slate-900 text-gray-900 dark:text-white">10개 보기</option>
-                      <option value={20} className="bg-white dark:bg-slate-900 text-gray-900 dark:text-white">20개 보기</option>
-                      <option value={50} className="bg-white dark:bg-slate-900 text-gray-900 dark:text-white">50개 보기</option>
-                      <option value={100} className="bg-white dark:bg-slate-900 text-gray-900 dark:text-white">100개 보기</option>
-                    </select>
+                    {searchType === 'video' && (
+                      <div className="flex items-center bg-gray-50 dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-xl px-3 group focus-within:ring-2 focus-within:ring-red-500 transition-all">
+                        <Tag className="w-4 h-4 text-slate-400 mr-2" />
+                        <select 
+                          value={category} 
+                          onChange={(e) => setCategory(e.target.value)} 
+                          className="bg-transparent py-2.5 text-gray-900 dark:text-white text-sm font-bold outline-none cursor-pointer"
+                          style={{ colorScheme: isDark ? 'dark' : 'light' }}
+                        >
+                          {CATEGORIES.map(cat => (
+                            <option key={cat.id} value={cat.id} className="bg-white dark:bg-slate-900 text-gray-900 dark:text-white">
+                              {cat.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+
+                    <div className="flex items-center bg-gray-50 dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-xl px-3 group focus-within:ring-2 focus-within:ring-red-500 transition-all">
+                      <List className="w-4 h-4 text-slate-400 mr-2" />
+                      <select 
+                        value={maxResults} 
+                        onChange={(e) => setMaxResults(Number(e.target.value))} 
+                        className="bg-transparent py-2.5 text-gray-900 dark:text-white text-sm font-bold outline-none cursor-pointer"
+                      >
+                        <option value={10} className="bg-white dark:bg-slate-900 text-gray-900 dark:text-white">10개 보기</option>
+                        <option value={20} className="bg-white dark:bg-slate-900 text-gray-900 dark:text-white">20개 보기</option>
+                        <option value={50} className="bg-white dark:bg-slate-900 text-gray-900 dark:text-white">50개 보기</option>
+                        <option value={100} className="bg-white dark:bg-slate-900 text-gray-900 dark:text-white">100개 보기</option>
+                      </select>
+                    </div>
                   </div>
-                </div>
-              </form>
+                </form>
+
+                {/* 실시간 트렌드 키워드 영역 */}
+                {trendingTags.length > 0 && !query && (
+                  <div className="mt-6 pt-6 border-t border-gray-100 dark:border-slate-800 animate-in fade-in slide-in-from-top-4 duration-500">
+                    <h3 className="flex items-center text-sm font-black text-gray-900 dark:text-white mb-3">
+                      <Flame className="w-4 h-4 text-red-500 mr-2" />
+                      실시간 트렌드 키워드
+                    </h3>
+                    <div className="flex flex-wrap gap-2">
+                      {trendingTags.map((tag, idx) => (
+                        <button
+                          key={idx}
+                          onClick={() => handleKeywordClick(tag)}
+                          className="px-3 py-1.5 bg-gray-100 dark:bg-slate-800 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-500 dark:hover:text-red-400 text-xs font-bold text-slate-600 dark:text-slate-400 rounded-lg transition-all border border-transparent hover:border-red-200 dark:hover:border-red-800"
+                        >
+                          #{tag}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
           {metrics && viewState === 'search' && searchType === 'video' && (
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 animate-in slide-in-from-bottom duration-500">
-              <MetricCard title="예상 시장 규모" value={metrics.totalViews.toLocaleString()} subtitle={`검색 결과 ${results.length}개 누적 조회수`} icon={BarChart3} iconBg="bg-blue-600" />
+              <MetricCard title="분석 시장 규모" value={metrics.totalViews.toLocaleString()} subtitle={`검색 결과 ${results.length}개 누적 조회수`} icon={BarChart3} iconBg="bg-blue-600" />
               <MetricCard title="시장 경쟁 강도" value={metrics.competition} subtitle={`영상당 평균 ${Math.round(metrics.avgViews).toLocaleString()}회`} icon={TrendingUp} iconBg="bg-red-600" />
               <MetricCard title="핵심 타겟팅 키워드" value={metrics.topTag} subtitle="현재 가장 인기 있는 태그" icon={HashIcon} iconBg="bg-indigo-600" />
             </div>
@@ -444,8 +536,17 @@ const App: React.FC = () => {
               <div className="flex flex-col lg:flex-row justify-between items-center bg-gray-50 dark:bg-[#111827] p-4 rounded-2xl border border-gray-200 dark:border-slate-800 shadow-sm transition-colors">
                 <div className="flex items-center space-x-4">
                   <h2 className="text-lg font-black text-gray-900 dark:text-white flex items-center">
-                    <Video className="w-5 h-5 mr-2 text-red-600" /> 
-                    {viewState === 'search' ? '분석 영상 리스트' : `${channelData?.info.title} 업로드 리스트`}
+                    {viewState === 'search' && !query ? (
+                      <>
+                        <Flame className="w-5 h-5 mr-2 text-red-500" /> 
+                        {category ? `'${CATEGORIES.find(c => c.id === category)?.name}' 트렌드` : '실시간 인기 급상승'}
+                      </>
+                    ) : (
+                      <>
+                        <Video className="w-5 h-5 mr-2 text-red-600" /> 
+                        {viewState === 'search' ? `'${query}' 분석 결과` : `${channelData?.info.title} 업로드 리스트`}
+                      </>
+                    )}
                     <span className="ml-2 text-slate-500 text-sm font-bold">({currentDisplayData.length}개)</span>
                   </h2>
                   <div className="flex bg-white dark:bg-slate-800 p-1 rounded-xl border border-gray-200 dark:border-slate-700">
