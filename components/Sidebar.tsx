@@ -1,5 +1,5 @@
 
-import { Key, Moon, Sun, Youtube, Sparkles, Trash2, Save } from 'lucide-react';
+import { Key, Moon, Sun, Youtube, Sparkles, Trash2, Save, ExternalLink } from 'lucide-react';
 import React from 'react';
 
 interface SidebarProps {
@@ -110,7 +110,14 @@ const Sidebar: React.FC<SidebarProps> = ({
       </div>
       
       <div className="p-6 border-t border-gray-100 dark:border-slate-800">
-        <p className="text-[10px] font-black text-slate-400 dark:text-slate-600 text-center uppercase tracking-widest">YT Analyst Pro v2.5.0</p>
+        <a 
+          href="https://xn--design-hl6wo12cquiba7767a.com/" 
+          target="_blank" 
+          rel="noopener noreferrer"
+          className="block text-[10px] font-black text-slate-400 dark:text-slate-500 text-center uppercase tracking-widest hover:text-red-500 dark:hover:text-red-400 transition-colors flex items-center justify-center"
+        >
+          떨림과울림Design.com <ExternalLink className="w-2.5 h-2.5 ml-1.5" />
+        </a>
       </div>
     </aside>
   );
